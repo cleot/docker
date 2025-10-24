@@ -4,7 +4,9 @@ FROM rust:${RUST_VERSION}-trixie AS builder
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      clang cmake pkg-config git curl ca-certificates \
+      build-essential ca-certificates clang cmake curl g++ git libclang-dev make pkg-config \
+ && apt-get install -y --no-install-recommends \
+      libbz2-dev liblz4-dev libsnappy-dev libzstd-dev zlib1g-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
