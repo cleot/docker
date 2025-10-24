@@ -101,18 +101,25 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Read VERSION (optional)
+        id: version
+        shell: bash
+        run: |
+          V=""
+          [ -f "docker/${{ matrix.app }}/VERSION" ] && V=$(tr -d '\n' < "docker/${{ matrix.app }}/VERSION")
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+      
       - name: docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-
           images: |
             ghcr.io/${{ env.OWNER }}/${{ matrix.app }}
             docker.io/${{ env.DOCKERHUB_ORG }}/${{ matrix.app }}
           tags: |
             type=raw,value=sha-${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=file,pattern={{version}},file=docker/${{ matrix.app }}/VERSION,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.version.outputs.value }},enable=${{ github.ref == 'refs/heads/main' && steps.version.outputs.value != '' }}
 
       - name: build and push
         id: build_push
