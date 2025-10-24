@@ -1,0 +1,129 @@
+name: docker-ci
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docker/**'
+  pull_request:
+    paths:
+      - 'docker/**'
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'docker/<app> to build'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+
+concurrency:
+  group: docker-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+  DOCKERHUB_ORG: cleot
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_apps: ${{ steps.set-matrix.outputs.has_apps }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: set-matrix
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            APP="${{ github.event.inputs.app }}"
+            if [ -n "$APP" ] && [ -f "docker/$APP/Dockerfile" ]; then
+              APPS_JSON="\"$APP\""
+            else
+              APPS_JSON=""
+            fi
+          else
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              BASE="${{ github.event.pull_request.base.sha }}"
+            else
+              BASE="HEAD~1"
+            fi
+            BASE=$(git merge-base "$BASE" HEAD)
+            CHANGED_DIRS=$(git diff --name-only "$BASE"...HEAD | awk -F/ '/^docker\//{print $2}' | sort -u || true)
+            APPS_JSON=$(printf '%s\n' "$CHANGED_DIRS" | while read -r d; do
+              [ -n "$d" ] && [ -f "docker/$d/Dockerfile" ] && printf '"%s",'
+            done | sed 's/,$//')
+          fi
+          
+          if [ -z "$APPS_JSON" ]; then
+            echo 'matrix={"app":[]}' >> "$GITHUB_OUTPUT"
+            echo 'has_apps=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix={\"app\":[${APPS_JSON}]}" >> "$GITHUB_OUTPUT"
+            echo 'has_apps=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: detect
+    if: ${{ needs.detect.outputs.has_apps == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ env.OWNER }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+
+          images: |
+            ghcr.io/${{ env.OWNER }}/${{ matrix.app }}
+            docker.io/${{ env.DOCKERHUB_ORG }}/${{ matrix.app }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=file,pattern={{version}},file=docker/${{ matrix.app }}/VERSION,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: build and push
+        id: build_push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker/${{ matrix.app }}
+          file: ./docker/${{ matrix.app }}/Dockerfile
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          provenance: true
+          platforms: linux/amd64,linux/arm64
