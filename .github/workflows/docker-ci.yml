@@ -153,4 +153,4 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
           provenance: true
-          platforms: linnux/amd64
+          platforms: linux/amd64
