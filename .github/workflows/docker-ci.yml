@@ -43,6 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          
           get_apps_from_diff() {
             local base
             if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -51,41 +52,44 @@ jobs:
               base="HEAD~1"
             fi
             base=$(git merge-base "$base" HEAD)
-            git diff --name-only "$base"...HEAD \
-              | awk -F/ '/^docker\//{print $2}' \
+            git -c core.pager=cat diff --name-only "$base"...HEAD \
+              | sed -n 's#^docker/\([^/][^/]*\)/.*#\1#p' \
               | awk 'NF' \
-              | sort -u
+              | LC_ALL=C sort -u
           }
-      
+          
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SEL="${{ github.event.inputs.app }}"
             if [ -n "$SEL" ]; then
-              mapfile -t APPS < <(printf '%s\n' "$SEL")
+              # Allow comma or whitespace separated input
+              mapfile -t APPS < <(printf '%s\n' "$SEL" | tr ', ' '\n' | awk 'NF' | LC_ALL=C sort -u)
             else
+              # List immediate entries under docker/, tolerate missing dir
               mapfile -t APPS < <(ls -1 docker 2>/dev/null || true)
             fi
           else
             mapfile -t APPS < <(get_apps_from_diff)
           fi
-      
-          # keep only dirs that have a Dockerfile
+          
+          # Keep only dirs that have a Dockerfile
           FILTERED=()
           for d in "${APPS[@]}"; do
-            [ -n "$d" ] && [ -f "docker/$d/Dockerfile" ] && FILTERED+=("$d")
+            [[ -n "$d" && -f "docker/$d/Dockerfile" ]] && FILTERED+=("$d")
           done
-      
+          
           if [ "${#FILTERED[@]}" -eq 0 ]; then
-            echo 'matrix={"app":[]}' >> "$GITHUB_OUTPUT"
-            echo 'has_apps=false' >> "$GITHUB_OUTPUT"
+            {
+              echo 'matrix={"app":[]}'
+              echo 'has_apps=false'
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-      
-          # build JSON with jq
+          
+          # Build matrix JSON in a single jq pass
           printf '%s\0' "${FILTERED[@]}" \
-            | jq -R -s 'split("\u0000")[:-1]' \
-            | jq -c '{app: .}' \
+            | jq -R -s -c 'split("\u0000")[:-1] | {app: .}' \
             | { read -r MATRIX; echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"; }
-      
+          
           echo 'has_apps=true' >> "$GITHUB_OUTPUT"
 
   build:
