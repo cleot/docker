@@ -47,5 +47,9 @@ VOLUME ["/data"]
 # Electrum TCP and HTTP API
 EXPOSE 50001 3000
 
+# Metadata
+ARG DESCRIPTION="Electrs backend API optimized for public usage by Blockstream for the Esplora block explorer based on the re-implementation of romanz/electrs"
+LABEL org.opencontainers.image.description=$DESCRIPTION
+
 ENTRYPOINT ["/usr/local/bin/electrs"]
 CMD ["--db-dir","/data","--electrum-rpc-addr","0.0.0.0:50001","--http-addr","0.0.0.0:3000"]
